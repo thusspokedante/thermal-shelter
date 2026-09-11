@@ -52,6 +52,58 @@ class SimulationResponse(BaseModel):
     heat_loss_breakdown: dict
     assumptions: list[str]
 
+class ShelterDesign(BaseModel):
+    """
+    A single named shelter design to be simulated as part of a
+    multi-design comparison. Mirrors the design-relevant fields of
+    SimulationRequest (geometry/wall/roof/floor/windows/doors), but
+    deliberately omits climate/settings since those are shared across
+    every design in a ComparisonRequest.
+    """
+    design_id: str
+    name: str
+    geometry: Geometry = Geometry()
+    wall: SurfaceConstruction
+    roof: SurfaceConstruction
+    floor: SurfaceConstruction
+    windows: list[Opening] = []
+    doors: list[Opening] = []
+
+
+class ComparisonRequest(BaseModel):
+    designs: list[ShelterDesign] = Field(min_length=2)
+    climate: list[ClimatePoint]
+    settings: SimulationSettings = SimulationSettings()
+
+    @model_validator(mode="after")
+    def check_climate(self):
+        if len(self.climate) < 2:
+            raise ValueError("At least two climate points are required.")
+        return self
+
+
+class DesignComparisonMetrics(BaseModel):
+    minimum_indoor_temperature_c: float
+    maximum_indoor_temperature_c: float
+    average_indoor_temperature_c: float
+    comfort_hours: float
+    solar_energy_captured_kwh: float
+    total_heat_loss_kwh: float
+
+
+class DesignComparisonResult(BaseModel):
+    design_id: str
+    name: str
+    rank: int
+    metrics: DesignComparisonMetrics
+
+
+class ComparisonResponse(BaseModel):
+    design_count: int
+    recommended_design: str
+    results: list[DesignComparisonResult]
+
+
 class SimulationFromClimateRequest(BaseModel):
     """
     Same as SimulationRequest, but instead of supplying a pre-built climate

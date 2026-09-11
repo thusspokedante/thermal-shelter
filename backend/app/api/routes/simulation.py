@@ -1,10 +1,16 @@
 from fastapi import APIRouter, HTTPException
 from app.schemas.simulation import (
+    ComparisonRequest,
+    ComparisonResponse,
     SimulationFromClimateRequest,
     SimulationRequest,
     SimulationResponse,
 )
-from app.services.simulation_service import run_simulation, run_simulation_from_climate
+from app.services.simulation_service import (
+    run_comparison,
+    run_simulation,
+    run_simulation_from_climate,
+)
 
 router = APIRouter(tags=["simulation"])
 
@@ -12,6 +18,21 @@ router = APIRouter(tags=["simulation"])
 def simulate(request: SimulationRequest):
     try:
         return run_simulation(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Simulation error: {exc}")
+
+
+@router.post("/simulation/compare", response_model=ComparisonResponse)
+def compare_simulations(request: ComparisonRequest):
+    """
+    Simulate 2+ shelter designs under the exact same shared climate data
+    and simulation settings, using the existing simulation engine for
+    each design, then rank them and return the recommended design.
+    """
+    try:
+        return run_comparison(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
