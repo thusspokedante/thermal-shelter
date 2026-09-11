@@ -1,17 +1,121 @@
-const screens=[...document.querySelectorAll('.screen')],progress=document.getElementById('progress');let step=0;const names=['Site','Form','Envelope','Openings','Simulation','Compare','Results'];
-    function render(){screens.forEach(s=>s.classList.toggle('active',+s.dataset.step===step));progress.hidden=!step;progress.innerHTML=step?names.map((n,i)=>`<i class="${i<step?'active':''}"></i>`).join('')+`<span>${String(step).padStart(2,'0')} / 07</span>`:'';if(step===6) updateComparison();if(step===7) updateResults();window.scrollTo({top:0,behavior:'smooth'})}
-    document.querySelectorAll('[data-next]').forEach(b=>b.onclick=()=>{step=Math.min(7,step+1);render()});document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{step=Math.max(0,step-1);render()});
-    document.getElementById('themeToggle').onclick=()=>document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';
-    document.querySelectorAll('.design-orientation').forEach(group=>group.onclick=e=>{if(e.target.tagName==='BUTTON'){group.querySelectorAll('button').forEach(x=>x.classList.remove('selected'));e.target.classList.add('selected')}});document.getElementById('shapes').onclick=e=>{const b=e.target.closest('button');if(b){document.querySelectorAll('.shape-btn').forEach(x=>x.classList.remove('selected'));b.classList.add('selected')}};
-    const siteData={"Barmer, Rajasthan":['32.1°C','7.8 kWh/m²','38.4°C','Barmer, Rajasthan · 01 May'],"Jaisalmer, Rajasthan":['33.4°C','8.1 kWh/m²','40.2°C','Jaisalmer, Rajasthan · 01 May'],"Bikaner, Rajasthan":['31.6°C','7.5 kWh/m²','37.2°C','Bikaner, Rajasthan · 01 May']};function updateWeather(){const k=document.getElementById('locationSelect').value,d=siteData[k];document.getElementById('mapLabel').textContent=k;document.getElementById('weatherPlace').textContent=d[3];document.getElementById('avgTemp').textContent=d[0];document.getElementById('solar').textContent=d[1];document.getElementById('liveTemp').textContent=d[2]};document.getElementById('locationSelect').onchange=updateWeather;document.getElementById('siteMap').onclick=e=>{if(e.target.tagName==='BUTTON')return;const s=document.getElementById('locationSelect');s.selectedIndex=(s.selectedIndex+1)%s.options.length;updateWeather()};
-    const materialStyle={Adobe:'mat-adobe',Fired:'mat-brick',Rammed:'mat-earth',Stone:'mat-stone',Lime:'mat-lime',Cork:'mat-cork',Air:'mat-air',Clay:'mat-clay',Timber:'mat-timber',Gypsum:'mat-gypsum'};
-    function getAssembly(id){return [...document.querySelectorAll(`#layers${id} .layer`)].map(row=>({material:row.querySelector('select').value,thickness:row.querySelector('input').value}))}
-    function updateAssembly(id){const layers=getAssembly(id),visual=document.getElementById(`wallVisual${id}`),caption=document.getElementById(`wallCaption${id}`);visual.innerHTML='';layers.forEach(layer=>{const key=Object.keys(materialStyle).find(x=>layer.material.startsWith(x))||'Adobe',block=document.createElement('div');block.className=materialStyle[key];block.style.width=(100/layers.length)+'%';block.setAttribute('title',layer.material);visual.append(block)});caption.textContent=layers.map(layer=>`${layer.material.split(' ')[0].toUpperCase()} ${layer.thickness.replace(' mm','')}`).join(' · ')+' mm'}
-    ['A','B'].forEach(id=>{const root=document.getElementById(`layers${id}`);root.onchange=()=>updateAssembly(id);root.onclick=e=>{if(e.target.classList.contains('remove')&&root.querySelectorAll('.layer').length>1){e.target.closest('.layer').remove();updateAssembly(id)}};updateAssembly(id)});
-    document.querySelectorAll('[data-add]').forEach(button=>button.onclick=()=>{const id=button.dataset.add,root=document.getElementById(`layers${id}`),n=root.querySelectorAll('.layer').length+1,row=document.createElement('div');row.className='layer';row.innerHTML=`<span class="layer-num">${String(n).padStart(2,'0')}</span><select class="material"><option>Cork insulation</option><option>Air cavity</option><option>Fired brick</option><option>Clay plaster</option></select><input value="40 mm"><button class="remove">×</button>`;root.append(row);updateAssembly(id)});
-    function assemblyMetrics(id){const layers=getAssembly(id),names=layers.map(x=>x.material);const mass=names.filter(n=>/Adobe|Brick|Earth|Stone/.test(n)).length;const insulation=names.filter(n=>/Cork|Air/.test(n)).length;return{names:names.map(n=>n.split(' ')[0]).join(' · '),mass:Math.min(96,36+mass*25),insulation:Math.min(96,25+insulation*34),score:Math.min(96,57+mass*12+insulation*13)}}
-    function level(v){return v>=75?'High':v>=52?'Med':'Low'}
-    function updateComparison(){const a=assemblyMetrics('A'),b=assemblyMetrics('B');[['A',a],['B',b]].forEach(([id,data])=>{document.getElementById(`design${id}Desc`).textContent=data.names;document.getElementById(`score${id}`).textContent=data.score;document.getElementById(`score${id}Label`).textContent=data.score+'%';document.getElementById(`bar${id}`).style.width=data.score+'%';document.getElementById(`mass${id}`).style.width=data.mass+'%';document.getElementById(`mass${id}Label`).textContent=level(data.mass);document.getElementById(`insulation${id}`).style.width=data.insulation+'%';document.getElementById(`insulation${id}Label`).textContent=level(data.insulation)});const winner=a.score>=b.score?'A':'B',gap=Math.abs(a.score-b.score);document.getElementById('comparisonWinner').textContent=`Assembly ${winner} is the leading option.`;document.getElementById('comparisonGap').textContent=gap?`+${gap} comfort points`:'Equal comfort estimate';document.getElementById('designA').classList.toggle('recommended',winner==='A');document.getElementById('designB').classList.toggle('recommended',winner==='B')}
-    document.querySelectorAll('.count').forEach(b=>b.onclick=()=>{const o=document.getElementById(b.dataset.for);o.value=Math.max(0,+o.value + +b.dataset.delta)});document.getElementById('duration').onclick=e=>{if(e.target.tagName==='BUTTON'){document.querySelectorAll('#duration button').forEach(b=>b.classList.remove('active'));e.target.classList.add('active')}};document.getElementById('comfort').oninput=e=>document.getElementById('comfortValue').textContent=`${e.target.value}–${+e.target.value+8} °C`;document.getElementById('ventilation').oninput=e=>document.getElementById('ventValue').textContent=['Low','Moderate','High'][e.target.value-1];
-    function updateResults(){const base=+document.getElementById('comfort').value,vent=+document.getElementById('ventilation').value,score=Math.min(94,79+(base-18)+vent);document.getElementById('comfortHours').textContent=score+'%';document.getElementById('meanIndoor').textContent=(23.1+(base-18)*.18)+'°C';document.getElementById('peakReduction').textContent='−'+(4.4+vent*.6).toFixed(1)+'°C';const inner=document.getElementById('indoorPath');inner.setAttribute('d',vent===3?'M0 100 C28 97 44 91 68 87 S103 78 130 77 S165 79 194 83 S227 93 253 91 S285 78 310 84 S322 93 330 92':'M0 103 C31 100 45 94 67 89 S102 75 129 72 S166 78 195 84 S228 98 253 93 S286 80 310 87 S321 97 330 95')};document.getElementById('restart').onclick=()=>{step=1;render()};document.getElementById('export').onclick=()=>{const t=document.getElementById('toast');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)};
-    document.getElementById('homeButton').onclick=()=>{step=0;render()};const info={dashboard:{kicker:'DASHBOARD',title:'Your passive shelter workspace',text:'Build two shelter options, test them under one shared climate, and compare thermal comfort, thermal mass and insulation before a simulation run.'},about:{kicker:'ABOUT THERMONEST',title:'Area-specific shelter design',text:'Thermonest is a guided concept tool for comparing passive shelter materials, form and openings against local climate conditions.'},how:{kicker:'HOW IT WORKS',title:'From site to thermal decision',text:'Select a site, define two shelter forms, build their wall assemblies, set their openings, then run the same climate scenario to compare the two user-defined designs.'}};const modal=document.getElementById('infoModal');document.querySelectorAll('[data-info]').forEach(button=>button.onclick=()=>{const d=info[button.dataset.info];document.getElementById('infoKicker').textContent=d.kicker;document.getElementById('infoTitle').textContent=d.title;document.getElementById('infoText').textContent=d.text;modal.hidden=false});document.getElementById('modalClose').onclick=()=>modal.hidden=true;document.getElementById('modalAction').onclick=()=>{modal.hidden=true;step=1;render()};modal.onclick=e=>{if(e.target===modal)modal.hidden=true};
+const screens = [...document.querySelectorAll('.screen')];
+const progress = document.getElementById('progress');
+let step = 0;
+const names = ['Site', 'Form', 'Envelope', 'Openings', 'Simulation', 'Review', 'Results'];
+
+function render() {
+  screens.forEach(screen => screen.classList.toggle('active', Number(screen.dataset.step) === step));
+  progress.hidden = !step;
+  progress.innerHTML = step
+    ? names.map((_, index) => `<i class="${index < step ? 'active' : ''}"></i>`).join('') + `<span>${String(step).padStart(2, '0')} / 07</span>`
+    : '';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+document.querySelectorAll('[data-next]').forEach(button => {
+  button.onclick = () => { step = Math.min(7, step + 1); render(); };
+});
+document.querySelectorAll('[data-back]').forEach(button => {
+  button.onclick = () => { step = Math.max(0, step - 1); render(); };
+});
+document.getElementById('themeToggle').onclick = () => {
+  document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+};
+
+const materialStyle = {
+  'Rammed Earth': 'mat-earth', Brick: 'mat-brick', Stone: 'mat-stone', Concrete: 'mat-stone',
+  Plaster: 'mat-clay', 'Mineral Wool': 'mat-cork', 'Glass Wool': 'mat-cork',
+  'EPS Insulation': 'mat-cork', 'XPS Insulation': 'mat-cork', Polyurethane: 'mat-cork',
+  Timber: 'mat-timber', Plywood: 'mat-timber', AAC: 'mat-earth'
+};
+
+function selectedMaterial(select) {
+  return select.options[select.selectedIndex].text;
+}
+function updateAssembly(id) {
+  const root = document.getElementById(`layers${id}`);
+  const layers = [...root.querySelectorAll('.layer')];
+  const visual = document.getElementById(`wallVisual${id}`);
+  const caption = document.getElementById(`wallCaption${id}`);
+  visual.innerHTML = '';
+  layers.forEach(row => {
+    const material = selectedMaterial(row.querySelector('select'));
+    const block = document.createElement('div');
+    block.className = materialStyle[material] || 'mat-earth';
+    block.style.width = `${100 / layers.length}%`;
+    block.title = material;
+    visual.append(block);
+  });
+  caption.textContent = layers.map(row => `${selectedMaterial(row.querySelector('select')).toUpperCase()} ${row.querySelector('input').value}`).join(' · ');
+}
+['A', 'B'].forEach(id => {
+  const root = document.getElementById(`layers${id}`);
+  root.onchange = () => updateAssembly(id);
+  root.onclick = event => {
+    if (event.target.classList.contains('remove') && root.querySelectorAll('.layer').length > 1) {
+      event.target.closest('.layer').remove();
+      updateAssembly(id);
+    }
+  };
+  updateAssembly(id);
+});
+
+function materialOptions() {
+  const materials = window.aasraMaterialCatalog || [
+    { id: 'mineral_wool', name: 'Mineral Wool' }, { id: 'brick', name: 'Brick' }, { id: 'plaster', name: 'Plaster' }
+  ];
+  return materials.map(material => `<option value="${material.id}">${material.name}</option>`).join('');
+}
+document.querySelectorAll('[data-add]').forEach(button => {
+  button.onclick = () => {
+    const id = button.dataset.add;
+    const root = document.getElementById(`layers${id}`);
+    const row = document.createElement('div');
+    row.className = 'layer';
+    row.innerHTML = `<span class="layer-num">${String(root.querySelectorAll('.layer').length + 1).padStart(2, '0')}</span><select class="material">${materialOptions()}</select><input value="40 mm"><button class="remove">×</button>`;
+    root.append(row);
+    updateAssembly(id);
+  };
+});
+
+document.querySelectorAll('.count').forEach(button => {
+  button.onclick = () => {
+    const output = document.getElementById(button.dataset.for);
+    output.value = Math.max(0, Number(output.value) + Number(button.dataset.delta));
+  };
+});
+document.getElementById('duration').onclick = event => {
+  if (event.target.tagName === 'BUTTON') {
+    document.querySelectorAll('#duration button').forEach(button => button.classList.remove('active'));
+    event.target.classList.add('active');
+  }
+};
+
+document.getElementById('restart').onclick = () => { step = 1; render(); };
+document.getElementById('export').onclick = () => {
+  const toast = document.getElementById('toast');
+  toast.textContent = 'Simulation summary exported';
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2400);
+};
+document.getElementById('homeButton').onclick = () => { step = 0; render(); };
+
+const info = {
+  about: {
+    kicker: 'ABOUT AASRA', title: 'Area-specific shelter design',
+    text: 'AASRA is a guided interface for running the supplied thermal model with real climate data and the backend material catalogue.'
+  }
+};
+const modal = document.getElementById('infoModal');
+document.querySelectorAll('[data-info]').forEach(button => {
+  button.onclick = () => {
+    const content = info[button.dataset.info];
+    document.getElementById('infoKicker').textContent = content.kicker;
+    document.getElementById('infoTitle').textContent = content.title;
+    document.getElementById('infoText').textContent = content.text;
+    modal.hidden = false;
+  };
+});
+document.getElementById('modalClose').onclick = () => { modal.hidden = true; };
+document.getElementById('modalAction').onclick = () => { modal.hidden = true; step = 1; render(); };
+modal.onclick = event => { if (event.target === modal) modal.hidden = true; };

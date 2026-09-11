@@ -1,170 +1,254 @@
-/* Connects the existing Thermonest interface to the supplied FastAPI backend.
-   It changes data flow only; visual markup, CSS and animations remain untouched. */
+/* Data integration for the supplied FastAPI contract. The backend owns all
+   thermal calculations; this file only builds valid request objects and renders
+   returned data. */
 (() => {
   const API_BASE = 'http://127.0.0.1:8000/api';
-  const sites = {
-    'Barmer, Rajasthan': { lat: 25.746, lon: 71.392 },
-    'Jaisalmer, Rajasthan': { lat: 26.915, lon: 70.908 },
-    'Bikaner, Rajasthan': { lat: 28.023, lon: 73.312 }
-  };
-  const materialIds = {
-    'Adobe block': 'rammed_earth', 'Fired brick': 'brick',
-    'Rammed earth': 'rammed_earth', Stone: 'stone',
-    'Lime plaster': 'plaster', 'Clay plaster': 'plaster',
-    'Cork insulation': 'mineral_wool', 'Air cavity': 'mineral_wool',
-    'Timber lining': 'wood', 'Gypsum board': 'plaster'
-  };
-  const roofLayers = {
-    'Terracotta tile + air gap': [{ material_id: 'concrete', thickness_m: .02 }, { material_id: 'mineral_wool', thickness_m: .05 }],
-    'Corrugated metal + insulation': [{ material_id: 'wood', thickness_m: .02 }, { material_id: 'mineral_wool', thickness_m: .08 }],
-    'Earth roof': [{ material_id: 'rammed_earth', thickness_m: .20 }]
-  };
-  const floorLayers = {
-    'Compacted earth': [{ material_id: 'rammed_earth', thickness_m: .15 }],
-    'Stone slab': [{ material_id: 'stone', thickness_m: .12 }],
-    'Concrete + finish': [{ material_id: 'concrete', thickness_m: .15 }]
-  };
-  let state = { comparison: null, recommended: null, settings: null };
   const byId = id => document.getElementById(id);
-  const today = value => value || new Date().toISOString().slice(0, 10);
-  const toast = message => {
-    const element = byId('toast');
-    element.textContent = message;
-    element.classList.add('show');
-    setTimeout(() => element.classList.remove('show'), 3000);
+  const state = { runs: {}, selectedDesign: null };
+
+  const notify = (message, isError = false) => {
+    const toast = byId('toast');
+    toast.textContent = message;
+    toast.classList.toggle('error', isError);
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 4400);
   };
   const request = async (url, options) => {
-    const response = await fetch(url, options);
+    let response;
+    try {
+      response = await fetch(url, options);
+    } catch (_) {
+      throw new Error('Cannot reach the backend. Start FastAPI at http://127.0.0.1:8000 and try again.');
+    }
     if (response.ok) return response.json();
-    let message = 'Backend request failed';
-    try { message = (await response.json()).detail || message; } catch (_) {}
-    throw new Error(message);
+    let detail = 'Request failed.';
+    try {
+      const body = await response.json();
+      detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail || body);
+    } catch (_) { /* keep the general message */ }
+    const messageByStatus = {
+      400: `Invalid simulation data: ${detail}`,
+      404: `API route or material was not found: ${detail}`,
+      422: `Some required values are invalid: ${detail}`,
+      500: `The simulation could not be completed: ${detail}`
+    };
+    throw new Error(messageByStatus[response.status] || `Backend error (${response.status}): ${detail}`);
   };
+  const selectedSite = () => window.selectedShelterLocation;
+  const durationHours = () => document.querySelector('#duration button.active').textContent.trim() === '24 hours' ? 24 : 168;
   const addDays = (date, days) => {
     const value = new Date(`${date}T00:00:00`);
     value.setDate(value.getDate() + days);
     return value.toISOString().slice(0, 10);
   };
-  const duration = () => {
-    const label = [...document.querySelectorAll('#duration button')]
-      .find(button => button.classList.contains('active'))?.textContent.trim();
-    return label === 'Hourly' ? 24 : 168; // Backend schema limits a run to 168 hours.
+  const numberValue = (id, label, options = {}) => {
+    const value = Number(byId(id).value);
+    if (!Number.isFinite(value) || (options.positive && value <= 0) || (options.nonNegative && value < 0)) {
+      throw new Error(`${label} must be ${options.positive ? 'greater than zero' : 'zero or greater'}.`);
+    }
+    return value;
   };
-  const assembly = id => [...document.querySelectorAll(`#layers${id} .layer`)].map(row => {
-    const name = row.querySelector('select').value;
-    const thickness = Math.max(.001, parseFloat(row.querySelector('input').value) / 1000 || .02);
-    return { material_id: materialIds[name] || 'plaster', thickness_m: thickness };
+  const materialLayer = (materialId, thicknessId, label) => ({
+    material_id: materialId,
+    thickness_m: numberValue(thicknessId, `${label} thickness`, { positive: true }) / 1000
   });
-  const glazing = label => label.startsWith('Double') ? { u: 1.8, shgc: .52 } : label.startsWith('Unshaded') ? { u: 4.8, shgc: .72 } : { u: 2.8, shgc: .60 };
-  const openingData = id => {
-    const panel = [...document.querySelectorAll('.opening-design')][id === 'A' ? 0 : 1];
-    const windowCount = Number(byId(`windows${id}`).value), doorCount = Number(byId(`doors${id}`).value), ventCount = Number(byId(`vents${id}`).value);
-    const glass = glazing(panel.querySelector('select').value);
+  const wall = id => ({
+    layers: [...document.querySelectorAll(`#layers${id} .layer`)].map((row, index) => {
+      const thickness = Number.parseFloat(row.querySelector('input').value);
+      if (!Number.isFinite(thickness) || thickness <= 0) throw new Error(`Wall layer ${index + 1} thickness for design ${id} must be greater than zero.`);
+      return { material_id: row.querySelector('select').value, thickness_m: thickness / 1000 };
+    })
+  });
+  const openingList = (count, area, uValue, shgc, solarExposure) => Array.from(
+    { length: numberValue(count, 'Opening count', { nonNegative: true }) },
+    () => ({ area_m2: area, u_value_w_m2k: uValue, shgc, solar_exposure_factor: solarExposure })
+  );
+  const designRequest = id => {
+    const windowArea = numberValue(`windowArea${id}`, 'Window area', { positive: true });
+    const windowU = numberValue(`windowU${id}`, 'Window U-value', { positive: true });
+    const windowShgc = numberValue(`windowShgc${id}`, 'Window solar gain', { nonNegative: true });
+    if (windowShgc > 1) throw new Error('Window solar gain (SHGC) must be between 0 and 1.');
+    const doorArea = numberValue(`doorArea${id}`, 'Door area', { positive: true });
+    const doorU = numberValue(`doorU${id}`, 'Door U-value', { positive: true });
     return {
-      windows: Array.from({ length: Math.max(0, windowCount) }, () => ({ area_m2: 1.2, u_value_w_m2k: glass.u, shgc: glass.shgc, solar_exposure_factor: 1 })),
-      doors: Array.from({ length: Math.max(0, doorCount) }, () => ({ area_m2: 1.8, u_value_w_m2k: 2, shgc: 0, solar_exposure_factor: 0 })),
-      vents: Math.max(0, ventCount)
+      geometry: {
+        length_m: numberValue(`length${id}`, 'Length', { positive: true }),
+        width_m: numberValue(`width${id}`, 'Width', { positive: true }),
+        height_m: numberValue(`height${id}`, 'Wall height', { positive: true })
+      },
+      wall: wall(id),
+      roof: { layers: [materialLayer(byId('roofMaterial').value, 'roofThickness', 'Roof')] },
+      floor: { layers: [materialLayer(byId('floorMaterial').value, 'floorThickness', 'Floor')] },
+      windows: openingList(`windows${id}`, windowArea, windowU, windowShgc, 1),
+      doors: openingList(`doors${id}`, doorArea, doorU, 0, 0),
+      settings: {
+        duration_hours: durationHours(),
+        timestep_minutes: numberValue('timestepMinutes', 'Time step', { positive: true }),
+        initial_indoor_temperature_c: numberValue('initialIndoorTemp', 'Initial indoor temperature'),
+        air_changes_per_hour: numberValue('airChanges', 'Air changes', { nonNegative: true }),
+        indoor_heat_gain_w: numberValue('internalGain', 'Internal gains', { nonNegative: true }),
+        comfort_min_c: numberValue('comfortMin', 'Comfort minimum'),
+        comfort_max_c: numberValue('comfortMax', 'Comfort maximum')
+      }
     };
   };
-  const design = id => {
-    const shared = document.querySelectorAll('.envelope-finishes select');
-    const openings = openingData(id);
-    return {
-      design_id: `design_${id.toLowerCase()}`,
-      name: `Shelter ${id}`,
-      geometry: { length_m: Number(byId(`length${id}`).value), width_m: Number(byId(`width${id}`).value), height_m: Number(byId(`height${id}`).value) },
-      wall: { layers: assembly(id) },
-      roof: { layers: roofLayers[shared[0].value] || roofLayers['Terracotta tile + air gap'] },
-      floor: { layers: floorLayers[shared[1].value] || floorLayers['Compacted earth'] },
-      windows: openings.windows, doors: openings.doors, vents: openings.vents
-    };
+  const updateComfortRange = () => {
+    const min = Number(byId('comfortMin').value);
+    const max = Number(byId('comfortMax').value);
+    byId('comfortValue').textContent = Number.isFinite(min) && Number.isFinite(max) ? `${min}–${max} °C` : 'Set a valid range';
   };
-  const settings = designs => {
-    const simulation = document.querySelector('[data-step="5"]');
-    const initial = Number(simulation.querySelector('input[type="number"]').value);
-    const comfortMin = Number(byId('comfort').value);
-    const vents = (designs[0].vents + designs[1].vents) / 2;
-    return { duration_hours: duration(), timestep_minutes: 10, initial_indoor_temperature_c: initial, air_changes_per_hour: .2 + vents * .1 + Number(byId('ventilation').value) * .05, indoor_heat_gain_w: 100, comfort_min_c: comfortMin, comfort_max_c: comfortMin + 8 };
+  byId('comfortMin').addEventListener('input', updateComfortRange);
+  byId('comfortMax').addEventListener('input', updateComfortRange);
+  updateComfortRange();
+
+  const linePath = (values, min, max, width, bottom, height) => values.map((value, index) => {
+    const x = (index / Math.max(1, values.length - 1)) * width;
+    const y = bottom - ((value - min) / Math.max(1, max - min)) * height;
+    return `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(' ');
+  const drawWeather = rows => {
+    const temperatures = rows.map(row => row.temperature);
+    const solar = rows.map(row => row.solar_irradiance);
+    if (!temperatures.length || !solar.length) return;
+    const temperatureLine = linePath(temperatures, Math.min(...temperatures) - 1, Math.max(...temperatures) + 1, 500, 140, 130);
+    const solarLine = linePath(solar, 0, Math.max(1, ...solar), 500, 140, 130);
+    byId('weatherLine').setAttribute('d', temperatureLine);
+    byId('weatherArea').setAttribute('d', `${temperatureLine} L500 140 L0 140 Z`);
+    byId('solarLine').setAttribute('d', solarLine);
   };
-  const comparisonUI = comparison => {
-    const durationHours = state.settings.duration_hours;
-    comparison.results.forEach(result => {
-      const id = result.design_id.endsWith('a') ? 'A' : 'B';
-      const metrics = result.metrics;
-      const comfort = Math.round(metrics.comfort_hours / durationHours * 100);
-      const protection = Math.max(0, Math.min(100, 100 - metrics.total_heat_loss_kwh * 8));
-      const solar = Math.max(0, Math.min(100, metrics.solar_energy_captured_kwh * 25));
-      byId(`design${id}Desc`).textContent = result.name;
-      byId(`score${id}`).textContent = comfort;
-      byId(`score${id}Label`).textContent = `${comfort}%`;
-      byId(`bar${id}`).style.width = `${comfort}%`;
-      byId(`mass${id}`).style.width = `${protection}%`;
-      byId(`mass${id}Label`).textContent = `${metrics.total_heat_loss_kwh.toFixed(1)} kWh`;
-      byId(`insulation${id}`).style.width = `${solar}%`;
-      byId(`insulation${id}Label`).textContent = `${metrics.solar_energy_captured_kwh.toFixed(1)} kWh`;
-      byId(`design${id}`).classList.toggle('recommended', result.rank === 1);
-    });
-    const winner = comparison.results.find(result => result.rank === 1);
-    byId('comparisonWinner').textContent = `${winner.name} is the recommended design.`;
-    byId('comparisonGap').textContent = `Rank 1 · ${winner.metrics.comfort_hours.toFixed(1)} comfort h`;
-  };
-  const line = (rows, field, min, max) => rows.map((row, index) => `${index ? 'L' : 'M'}${(index / (rows.length - 1 || 1) * 330).toFixed(1)} ${(148 - (row[field] - min) / Math.max(max - min, 1) * 132).toFixed(1)}`).join(' ');
-  const resultUI = result => {
-    const { summary, time_series: rows } = result;
-    const comfort = Math.round(summary.comfort_hours / summary.duration_hours * 100);
-    const outdoorMax = Math.max(...rows.map(row => row.outdoor_temperature_c));
-    byId('comfortHours').textContent = `${comfort}%`;
-    byId('meanIndoor').textContent = `${summary.indoor_temperature_average_c.toFixed(1)}°C`;
-    byId('peakReduction').textContent = `−${Math.max(0, outdoorMax - summary.indoor_temperature_max_c).toFixed(1)}°C`;
-    byId('resultSummary').textContent = `The recommended user-defined shelter maintains comfort for ${summary.comfort_hours.toFixed(1)} of ${summary.duration_hours} simulated hours, captures ${summary.solar_energy_captured_kwh.toFixed(1)} kWh of solar energy and loses ${summary.total_heat_loss_kwh.toFixed(1)} kWh through the envelope.`;
-    const values = rows.flatMap(row => [row.outdoor_temperature_c, row.indoor_temperature_c]);
-    const min = Math.min(...values) - 1, max = Math.max(...values) + 1;
-    byId('outdoorPath').setAttribute('d', line(rows, 'outdoor_temperature_c', min, max));
-    byId('indoorPath').setAttribute('d', line(rows, 'indoor_temperature_c', min, max));
-    const midpoint = (state.settings.comfort_min_c + state.settings.comfort_max_c) / 2;
-    const y = 148 - (midpoint - min) / Math.max(max - min, 1) * 132;
-    const thickness = Math.max(6, (state.settings.comfort_max_c - state.settings.comfort_min_c) / Math.max(max - min, 1) * 132);
-    byId('comfortBand').setAttribute('d', `M0 ${y} L330 ${y}`);
-    byId('comfortBand').setAttribute('stroke-width', thickness);
-  };
-  const simButton = document.querySelector('[data-step="5"] [data-next]');
-  simButton.onclick = async () => {
-    const original = simButton.innerHTML;
-    simButton.disabled = true;
-    simButton.textContent = 'Running simulation…';
+  async function refreshWeather(site) {
+    if (!site) return;
     try {
-      const startDate = today(byId('simDate').value);
-      const site = sites[byId('locationSelect').value];
-      const query = new URLSearchParams({ latitude: site.lat, longitude: site.lon, start_date: startDate, end_date: addDays(startDate, Math.ceil(duration() / 24) - 1) });
-      const climateResponse = await request(`${API_BASE}/climate?${query}`);
-      const climate = climateResponse.hourly.map(row => ({ timestamp: row.time, outdoor_temperature_c: row.temperature, solar_irradiance_w_m2: row.solar_irradiance, relative_humidity_percent: row.relative_humidity, wind_speed_m_s: row.wind_speed }));
-      const designs = [design('A'), design('B')];
-      const sharedSettings = settings(designs);
-      const comparison = await request(`${API_BASE}/simulation/compare`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ designs: designs.map(({ vents, ...payload }) => payload), climate, settings: sharedSettings }) });
-      const winning = comparison.results.find(result => result.rank === 1);
-      const winningDesign = designs.find(item => item.design_id === winning.design_id);
-      const recommended = await request(`${API_BASE}/simulation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...winningDesign, climate, settings: sharedSettings }) });
-      state = { comparison, recommended, settings: sharedSettings };
-      comparisonUI(comparison);
-      step = 6; render(); comparisonUI(comparison);
+      const date = byId('simDate').value;
+      const query = new URLSearchParams({ latitude: site.lat, longitude: site.lon, start_date: date, end_date: date });
+      const climate = await request(`${API_BASE}/climate?${query}`);
+      const rows = climate.hourly;
+      if (!rows.length) throw new Error('No hourly climate data was returned for this date.');
+      const temps = rows.map(row => row.temperature);
+      const solar = rows.map(row => row.solar_irradiance);
+      const place = site.label || `${site.lat.toFixed(4)}°, ${site.lon.toFixed(4)}°`;
+      byId('weatherPlace').textContent = `${place} · ${date}`;
+      byId('avgTemp').textContent = `${(temps.reduce((sum, value) => sum + value, 0) / temps.length).toFixed(1)}°C`;
+      byId('solar').textContent = `${(solar.reduce((sum, value) => sum + value, 0) / 1000).toFixed(2)} kWh/m²`;
+      byId('liveTemp').textContent = `${rows[Math.min(14, rows.length - 1)].temperature.toFixed(1)}°C`;
+      drawWeather(rows);
     } catch (error) {
-      toast(`Simulation unavailable: ${error.message}`);
-    } finally {
-      simButton.disabled = false;
-      simButton.innerHTML = original;
+      byId('weatherPlace').textContent = 'Climate data unavailable';
+      byId('avgTemp').textContent = '—';
+      byId('solar').textContent = '—';
+      byId('liveTemp').textContent = '—';
+      notify(error.message, true);
+    }
+  }
+  const loadMaterials = async () => {
+    try {
+      const response = await request(`${API_BASE}/materials`);
+      if (!Array.isArray(response.materials) || !response.materials.length) throw new Error('The backend material catalogue is empty.');
+      window.aasraMaterialCatalog = response.materials;
+      document.querySelectorAll('select.material, select.construction-material').forEach(select => {
+        const priorValue = select.value;
+        select.innerHTML = response.materials.map(material => `<option value="${material.id}">${material.name}</option>`).join('');
+        select.value = response.materials.some(material => material.id === priorValue) ? priorValue : response.materials[0].id;
+      });
+      ['A', 'B'].forEach(id => updateAssembly(id));
+    } catch (error) {
+      notify(error.message, true);
     }
   };
-  document.querySelector('[data-step="6"] [data-next]').onclick = () => { step = 7; render(); if (state.recommended) resultUI(state.recommended); };
-  byId('locationSelect').addEventListener('change', async () => {
-    const site = sites[byId('locationSelect').value];
+  const displayReview = () => {
+    const settings = state.runs.A?.summary ? state.runs.A.settings : null;
+    ['A', 'B'].forEach(id => {
+      const result = state.runs[id];
+      const summary = result.summary;
+      const comfortPercent = Math.round((summary.comfort_hours / summary.duration_hours) * 100);
+      byId(`design${id}Desc`).textContent = `${summary.indoor_temperature_min_c.toFixed(1)}–${summary.indoor_temperature_max_c.toFixed(1)}°C indoors`;
+      byId(`score${id}`).textContent = `${summary.comfort_hours.toFixed(1)} h`;
+      byId(`score${id}Label`).textContent = `${comfortPercent}%`;
+      byId(`bar${id}`).style.width = `${comfortPercent}%`;
+      const lossMetric = Math.min(100, summary.total_heat_loss_kwh * 10);
+      const solarMetric = Math.min(100, summary.solar_energy_captured_kwh * 25);
+      byId(`mass${id}`).style.width = `${lossMetric}%`;
+      byId(`mass${id}Label`).textContent = `${summary.total_heat_loss_kwh.toFixed(2)} kWh`;
+      byId(`insulation${id}`).style.width = `${solarMetric}%`;
+      byId(`insulation${id}Label`).textContent = `${summary.solar_energy_captured_kwh.toFixed(2)} kWh`;
+      byId(`design${id}`).classList.remove('recommended');
+    });
+    byId('comparisonWinner').textContent = 'Select design A or B to inspect its backend simulation result.';
+    byId('comparisonGap').textContent = 'NO AUTO-RANKING';
+    return settings;
+  };
+  const drawResult = id => {
+    const result = state.runs[id];
+    if (!result) return;
+    const { summary, time_series: rows } = result;
+    const comfortPercent = Math.round((summary.comfort_hours / summary.duration_hours) * 100);
+    const outdoorMax = Math.max(...rows.map(row => row.outdoor_temperature_c));
+    byId('comfortHours').textContent = `${comfortPercent}%`;
+    byId('meanIndoor').textContent = `${summary.indoor_temperature_average_c.toFixed(1)}°C`;
+    byId('peakReduction').textContent = `−${Math.max(0, outdoorMax - summary.indoor_temperature_max_c).toFixed(1)}°C`;
+    byId('resultSummary').textContent = `Design ${id} stayed in the selected comfort range for ${summary.comfort_hours.toFixed(1)} of ${summary.duration_hours} simulated hours. Backend results report ${summary.solar_energy_captured_kwh.toFixed(2)} kWh solar energy captured and ${summary.total_heat_loss_kwh.toFixed(2)} kWh total heat loss.`;
+    const allTemps = rows.flatMap(row => [row.outdoor_temperature_c, row.indoor_temperature_c]);
+    const min = Math.min(...allTemps) - 1;
+    const max = Math.max(...allTemps) + 1;
+    byId('outdoorPath').setAttribute('d', linePath(rows.map(row => row.outdoor_temperature_c), min, max, 330, 148, 132));
+    byId('indoorPath').setAttribute('d', linePath(rows.map(row => row.indoor_temperature_c), min, max, 330, 148, 132));
+    const comfortMid = (result.settings.comfort_min_c + result.settings.comfort_max_c) / 2;
+    const y = 148 - ((comfortMid - min) / Math.max(1, max - min)) * 132;
+    const band = Math.max(6, ((result.settings.comfort_max_c - result.settings.comfort_min_c) / Math.max(1, max - min)) * 132);
+    byId('comfortBand').setAttribute('d', `M0 ${y.toFixed(1)} L330 ${y.toFixed(1)}`);
+    byId('comfortBand').setAttribute('stroke-width', band.toFixed(1));
+  };
+
+  const runButton = document.querySelector('[data-step="5"] [data-next]');
+  runButton.onclick = async () => {
+    const original = runButton.innerHTML;
+    runButton.disabled = true;
+    runButton.textContent = 'Running simulations…';
     try {
-      const date = today(byId('simDate').value);
-      const climate = await request(`${API_BASE}/climate?${new URLSearchParams({ latitude: site.lat, longitude: site.lon, start_date: date, end_date: date })}`);
-      const rows = climate.hourly, temps = rows.map(row => row.temperature), solar = rows.map(row => row.solar_irradiance);
-      byId('weatherPlace').textContent = `${byId('locationSelect').value} · ${date}`;
-      byId('avgTemp').textContent = `${(temps.reduce((sum, value) => sum + value, 0) / temps.length).toFixed(1)}°C`;
-      byId('solar').textContent = `${(solar.reduce((sum, value) => sum + value, 0) / 1000).toFixed(1)} kWh/m²`;
-      byId('liveTemp').textContent = `${rows[Math.min(14, rows.length - 1)].temperature.toFixed(1)}°C`;
-    } catch (_) { /* Existing preview remains available when the API is offline. */ }
+      const first = designRequest('A');
+      const second = designRequest('B');
+      if (first.settings.comfort_max_c <= first.settings.comfort_min_c) throw new Error('Comfort maximum must be greater than comfort minimum.');
+      const site = selectedSite();
+      const start = byId('simDate').value;
+      const end = addDays(start, Math.ceil(durationHours() / 24) - 1);
+      const climateQuery = new URLSearchParams({ latitude: site.lat, longitude: site.lon, start_date: start, end_date: end });
+      const climateResponse = await request(`${API_BASE}/climate?${climateQuery}`);
+      const climate = climateResponse.hourly.map(row => ({
+        timestamp: row.time,
+        outdoor_temperature_c: row.temperature,
+        solar_irradiance_w_m2: row.solar_irradiance,
+        relative_humidity_percent: row.relative_humidity,
+        wind_speed_m_s: row.wind_speed
+      }));
+      if (climate.length < 2) throw new Error('The backend returned too little climate data to run a simulation.');
+      const [runA, runB] = await Promise.all([
+        request(`${API_BASE}/simulation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...first, climate }) }),
+        request(`${API_BASE}/simulation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...second, climate }) })
+      ]);
+      state.runs = { A: { ...runA, settings: first.settings }, B: { ...runB, settings: second.settings } };
+      displayReview();
+      step = 6;
+      render();
+      displayReview();
+    } catch (error) {
+      notify(error.message, true);
+    } finally {
+      runButton.disabled = false;
+      runButton.innerHTML = original;
+    }
+  };
+  document.querySelectorAll('[data-view-result]').forEach(button => {
+    button.onclick = () => {
+      const id = button.dataset.viewResult;
+      if (!state.runs[id]) return notify('Run both designs before viewing results.', true);
+      state.selectedDesign = id;
+      step = 7;
+      render();
+      drawResult(id);
+    };
   });
+  byId('simDate').addEventListener('change', () => refreshWeather(selectedSite()));
+  window.addEventListener('shelterlocationchange', event => refreshWeather(event.detail));
+  loadMaterials();
+  refreshWeather(selectedSite());
 })();
