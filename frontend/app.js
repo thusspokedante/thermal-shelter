@@ -94,7 +94,19 @@ document.getElementById('duration').onclick = event => {
 document.getElementById('restart').onclick = () => { step = 1; render(); };
 document.getElementById('export').onclick = () => {
   const toast = document.getElementById('toast');
+<<<<<<< HEAD
+  if (!window.exportAasraSummary || !window.exportAasraSummary()) {
+    toast.textContent = 'Run and select a design before exporting.';
+    toast.classList.add('error');
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2400);
+    return;
+  }
+  toast.classList.remove('error');
+  toast.textContent = 'Simulation summary downloaded as CSV';
+=======
   toast.textContent = 'Simulation summary exported';
+>>>>>>> 0e13ea69e5f96ec7ae39838ebbb0097e6dce61cb
   toast.classList.add('show');
   setTimeout(() => toast.classList.remove('show'), 2400);
 };

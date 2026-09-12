@@ -37,8 +37,15 @@
   const selectedSite = () => window.selectedShelterLocation;
   const durationHours = () => document.querySelector('#duration button.active').textContent.trim() === '24 hours' ? 24 : 168;
   const addDays = (date, days) => {
+<<<<<<< HEAD
+    // Use UTC calendar arithmetic so an Indian/other positive timezone cannot
+    // turn a same-day range into the previous date through toISOString().
+    const value = new Date(`${date}T00:00:00Z`);
+    value.setUTCDate(value.getUTCDate() + days);
+=======
     const value = new Date(`${date}T00:00:00`);
     value.setDate(value.getDate() + days);
+>>>>>>> 0e13ea69e5f96ec7ae39838ebbb0097e6dce61cb
     return value.toISOString().slice(0, 10);
   };
   const numberValue = (id, label, options = {}) => {
@@ -155,6 +162,18 @@
       notify(error.message, true);
     }
   };
+<<<<<<< HEAD
+  const rankDesigns = () => Object.entries(state.runs).sort(([idA, runA], [idB, runB]) => {
+    const a = runA.summary;
+    const b = runB.summary;
+    // Rank comfort first, then prefer lower heat loss, then higher solar gain.
+    return (b.comfort_hours - a.comfort_hours)
+      || (a.total_heat_loss_kwh - b.total_heat_loss_kwh)
+      || (b.solar_energy_captured_kwh - a.solar_energy_captured_kwh)
+      || idA.localeCompare(idB);
+  });
+=======
+>>>>>>> 0e13ea69e5f96ec7ae39838ebbb0097e6dce61cb
   const displayReview = () => {
     const settings = state.runs.A?.summary ? state.runs.A.settings : null;
     ['A', 'B'].forEach(id => {
@@ -173,8 +192,18 @@
       byId(`insulation${id}Label`).textContent = `${summary.solar_energy_captured_kwh.toFixed(2)} kWh`;
       byId(`design${id}`).classList.remove('recommended');
     });
+<<<<<<< HEAD
+    const ranked = rankDesigns();
+    const [winnerId, winner] = ranked[0];
+    const [runnerUpId, runnerUp] = ranked[1];
+    const comfortGap = winner.summary.comfort_hours - runnerUp.summary.comfort_hours;
+    byId(`design${winnerId}`).classList.add('recommended');
+    byId('comparisonWinner').textContent = `Design ${winnerId} is recommended: ${winner.summary.comfort_hours.toFixed(1)} comfort hours${comfortGap ? ` (${comfortGap.toFixed(1)} h more than design ${runnerUpId})` : ''}.`;
+    byId('comparisonGap').textContent = `RANK 1 · DESIGN ${winnerId}`;
+=======
     byId('comparisonWinner').textContent = 'Select design A or B to inspect its backend simulation result.';
     byId('comparisonGap').textContent = 'NO AUTO-RANKING';
+>>>>>>> 0e13ea69e5f96ec7ae39838ebbb0097e6dce61cb
     return settings;
   };
   const drawResult = id => {
@@ -197,6 +226,47 @@
     const band = Math.max(6, ((result.settings.comfort_max_c - result.settings.comfort_min_c) / Math.max(1, max - min)) * 132);
     byId('comfortBand').setAttribute('d', `M0 ${y.toFixed(1)} L330 ${y.toFixed(1)}`);
     byId('comfortBand').setAttribute('stroke-width', band.toFixed(1));
+<<<<<<< HEAD
+    const totalHours = summary.duration_hours;
+    byId('resultAxisStart').textContent = '0 h';
+    byId('resultAxisQuarter').textContent = `${(totalHours * .25).toFixed(0)} h`;
+    byId('resultAxisHalf').textContent = `${(totalHours * .5).toFixed(0)} h`;
+    byId('resultAxisThreeQuarter').textContent = `${(totalHours * .75).toFixed(0)} h`;
+    byId('resultAxisEnd').textContent = `${totalHours.toFixed(0)} h`;
+  };
+
+  const csvCell = value => `"${String(value ?? '').replaceAll('"', '""')}"`;
+  window.exportAasraSummary = () => {
+    const id = state.selectedDesign;
+    const result = state.runs[id];
+    if (!result) return false;
+    const { summary, time_series: rows } = result;
+    const exportRows = [
+      ['AASRA thermal shelter simulation summary'],
+      ['Selected design', id],
+      ['Comfort hours', summary.comfort_hours],
+      ['Duration hours', summary.duration_hours],
+      ['Comfort percentage', `${((summary.comfort_hours / summary.duration_hours) * 100).toFixed(1)}%`],
+      ['Mean indoor temperature (°C)', summary.indoor_temperature_average_c],
+      ['Indoor minimum temperature (°C)', summary.indoor_temperature_min_c],
+      ['Indoor maximum temperature (°C)', summary.indoor_temperature_max_c],
+      ['Solar energy captured (kWh)', summary.solar_energy_captured_kwh],
+      ['Total heat loss (kWh)', summary.total_heat_loss_kwh],
+      [],
+      ['Timestamp', 'Indoor temperature (°C)', 'Outdoor temperature (°C)']
+    ];
+    rows.forEach(row => exportRows.push([row.timestamp, row.indoor_temperature_c, row.outdoor_temperature_c]));
+    const blob = new Blob([exportRows.map(row => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `aasra-simulation-design-${id.toLowerCase()}.csv`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+    return true;
+=======
+>>>>>>> 0e13ea69e5f96ec7ae39838ebbb0097e6dce61cb
   };
 
   const runButton = document.querySelector('[data-step="5"] [data-next]');
